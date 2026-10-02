@@ -20,10 +20,12 @@
 #include <QDir>
 #include <QCoreApplication>
 #include "LogMessageDescriptions.h"
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <limits>
 #include <iomanip>
 #include <map>
 #include <optional>
@@ -514,6 +516,7 @@ bool DataLoadAPBIN::readDataFromFile(FileLoadInfo* info, PlotDataMapRef& plot_da
     auto apply_tsync_start = std::chrono::high_resolution_clock::now();
   #endif
   apply_timesync();
+  apply_zero_origin();
   #ifdef DEBUG_RUNTIME
     auto apply_tsync_end = std::chrono::high_resolution_clock::now();
     apply_tsync_ms += (apply_tsync_end - apply_tsync_start);
@@ -1275,9 +1278,11 @@ namespace
     return std::nullopt;
   }
 
+  using MessagesMap = std::map<std::string, std::map<int8_t,
+      std::vector<std::pair<std::string, std::vector<double>>>>>;
+
   void shift_all_timestamps(
-    std::map<std::string, std::map<int8_t,
-        std::vector<std::pair<std::string, std::vector<double>>>>>& messages_map,
+    MessagesMap& messages_map,
     const std::map<std::string, std::map<std::string, uint8_t>>& field_name2idx,
     double time_offset_sec)
   {
@@ -1303,6 +1308,53 @@ namespace
                         [time_offset_sec](double t) { return t + time_offset_sec; });
       }
     }
+  }
+
+  std::optional<double> min_timestamp(
+    const MessagesMap& messages_map,
+    const std::map<std::string, std::map<std::string, uint8_t>>& field_name2idx)
+  {
+    double min_t = std::numeric_limits<double>::infinity();
+    bool found = false;
+
+    for (const auto& [msg_name, instances_map] : messages_map)
+    {
+      const auto msg_fields_it = field_name2idx.find(msg_name);
+      if (msg_fields_it == field_name2idx.end())
+      {
+        continue;
+      }
+
+      const auto time_idx_it = msg_fields_it->second.find("TimeUS");
+      if (time_idx_it == msg_fields_it->second.end())
+      {
+        continue;
+      }
+      const auto& msg_time_idx = time_idx_it->second;
+
+      for (const auto& [instance_id, msg_data] : instances_map)
+      {
+        if (msg_time_idx >= msg_data.size())
+        {
+          continue;
+        }
+        const std::vector<double>& timestamps = msg_data[msg_time_idx].second;
+        for (double t : timestamps)
+        {
+          if (t < min_t)
+          {
+            min_t = t;
+            found = true;
+          }
+        }
+      }
+    }
+
+    if (!found)
+    {
+      return std::nullopt;
+    }
+    return min_t;
   }
 
 }
@@ -1354,4 +1406,17 @@ void DataLoadAPBIN::apply_timesync(void)
   _time_offset     = time_offset_sec;
 
   shift_all_timestamps(messages_map, field_name2idx, time_offset_sec);
+}
+
+void DataLoadAPBIN::apply_zero_origin(void)
+{
+  const auto min_t = min_timestamp(messages_map, field_name2idx);
+  if (!min_t)
+  {
+    return;
+  }
+
+  _start_plot_time = *min_t - _time_offset;
+  shift_all_timestamps(messages_map, field_name2idx, -*min_t);
+  _time_offset -= *min_t;
 }

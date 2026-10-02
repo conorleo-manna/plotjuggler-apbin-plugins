@@ -123,6 +123,9 @@ private:
   // apply time synchronization to the messages_map
   void apply_timesync(void);
 
+  // shift TimeUS so the earliest sample is t = 0
+  void apply_zero_origin(void);
+
   static double gps_to_unix_time(double gps_week, double gps_ms_of_week);
   double _start_plot_time = 0.0;
   double _time_offset = 0.0;

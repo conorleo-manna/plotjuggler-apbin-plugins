@@ -48,6 +48,7 @@ elseif(DEFINED ENV{AMENT_PREFIX_PATH})
 else()
     # --- Build without any ROS support (standalone) ---
     message(STATUS "COMPILING STANDALONE")
+    find_package(fmt REQUIRED)
     find_package(plotjuggler REQUIRED)
     # This is the critical line for moc to find the PJ::DataLoader interface
     include_directories(${plotjuggler_INCLUDE_DIR})
